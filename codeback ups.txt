@@ -1,0 +1,367 @@
+# B – creating timeseries
+```{r}
+# getting a list of files from working dir
+file.list <- list.files("/home/kp/Documents/Filipo_CW",pattern = ".txt")
+# getting the columns for a non text row, a row that has the structure of interest
+one.line <- readLines(file.list[1], n = 9)[9] 
+# getting the width of each of the columns, selecting only columns of interest
+widths <- diff(c(0, gregexpr("\\S(?=\\s)", paste(one.line, ""), perl = TRUE)[[1]]))[1:13]
+# getting the column names for each of the columns, unselecting unwanted rows
+col_names <- read.table('TmaxEast_Anglia.txt', skip = 5, nrow = 1, as.is = TRUE) %>%  select(-V14,-V15,-V16,-V17,-V18)
+# List from all file names and omitting rows with null value,filtering unwanted column and creating ts
+data_list <- lapply(file.list, read.fwf, widths, skip = 6, col.names = col_names, check.names = FALSE) %>% lapply(na.omit) %>% lapply(select,-year) %>% lapply(t) %>% lapply(as.vector) %>% lapply(ts,start =1884, frequency=12)
+# getting only the file names, and naming each item in the list corresponding file name
+names(data_list) <- gsub(".txt","",
+                       list.files("/home/kp/Documents/Filipo_CW",pattern="*.txt$",full.names = FALSE),
+                       fixed = TRUE)
+#get names of all Timeseries 
+names(data_list)
+```
+
+
+# Task 1 – Getting the data (10%)--------------------------------------------------------------------------
+•Write an R script that downloads the data directly from the website for the 30 time series (3time series for each of the 10 districts)using the “Year ordered statistics”option, and selecting the districts listed.Download up to December 2020.
+
+•Create the 30 time-series objects in R to store the data you have downloaded. Remember to specify the appropriate starting point and frequency.
+
+```{r}
+# import the purr library and stringr for string manipulation
+library(purrr)
+# create the parameter vector
+Parameter <- c('Tmax/date/','Tmin/date/','Tmean/date/')
+# create the region vector
+Region <- c("Northern_Ireland","Scotland_N","Scotland_E","Scotland_W","England_E_and_NE","England_NW_and_N_Wales","Midlands","East_Anglia","England_SW_and_S_Wales","England_SE_and_Central_S")
+
+# use walk function to map region and vector into download function
+walk(Parameter, function(x) {
+   map(x, ~sprintf("https://www.metoffice.gov.uk/pub/data/weather/uk/climate/datasets/%s%s.txt",., Region)) %>% 
+    flatten_chr() -> urls
+    # Destination should be working directory
+    dest_part <- strsplit(strsplit(urls,"/datasets")[[1]][2],"/")[[1]][2]
+    # Download files
+    download.file(urls, gsub(" ", "", paste(dest_part,basename(urls))), method="libcurl")
+  })
+
+```
+
+
+
+```{r}
+model_design <- function(data,time,var_name,poly_degree) {
+   var_name <-lm(data ~ poly(time, degree = poly_degree, raw = TRUE))
+  
+  main <- "Average Atlanta Temperature from 1879"
+  xlab <- "Year"
+  ylab <- "Temp"
+  
+  
+  plot(
+    data,
+    main = main,
+    xlab = xlab,
+    ylab = ylab,
+    lwd = 2,
+    type = "l"
+  )
+  
+  
+  lines(
+    time,
+    fitted(var_name),
+    lwd = 3,
+    col = 'red',
+    lty = "dotdash"
+  )
+  
+ 
+  
+}
+```
+
+
+
+```{r}
+# linear model ----
+
+linear <- lm(Tmax_2019$Northern_Ireland ~ poly(time.all, degree = 1, raw = TRUE))
+
+
+main <- "Average Atlanta Temperature from 1879"
+xlab <- "Year"
+ylab <- "Temperature"
+
+
+plot(Tmax_2019$Northern_Ireland,
+     main = main,
+     xlab = xlab,
+     ylab = ylab,
+     lwd = 2,
+     type = "l")
+
+
+lines(time.all,     
+      fitted(linear), 
+      lwd = 3,
+      col = 'red',
+      lty = "dotdash") # line type
+```
+
+
+
+
+
+
+https://www.metoffice.gov.uk/pub/data/weather/uk/climate/datasets/Tmin/date/Northern_Ireland.txt
+
+
+
+```{r}
+addPercent <- function(x){
+ data_list %>%  lapply(x)  %>%  list() %>% lapply(unlist) %>% as.data.frame() %>% setnames("values")-> df
+df <- cbind(Region = rownames(df), df)
+rownames(df) <- 1:nrow(df)
+result <- df[which.max(df$values),]
+ return(result)
+}
+```
+
+
+```{r}
+addPercent(mean)
+```
+
+
+```{r}
+data_list %>%  lapply(mean)  %>%  list() %>% lapply(unlist) %>% as.data.frame() %>% setnames("values")-> df
+df <- cbind(Region = rownames(df), df)
+rownames(df) <- 1:nrow(df)
+df[which.max(df$values),]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Tmin
+```{r}
+lapply(Tmin_2019,model_design,var_name='linear',poly_degree=1,time=time.all) %>%
+  set_names(districts) -> Tmin_linear_models
+
+lapply(Tmin_2019,model_design,var_name='quadratic',poly_degree=2,time=time.all) %>%
+  set_names(districts) -> Tmin_quadratic_models
+
+lapply(Tmin_2019,model_design,var_name='quadratic',poly_degree=3,time=time.all) %>%
+  set_names(districts) -> Tmin_cubic_models
+```
+
+
+
+Tmean
+```{r}
+lapply(Tmean_2019,model_design,var_name='linear',poly_degree=1,time=time.all) %>%
+  set_names(districts) -> Tmean_linear_models
+
+lapply(Tmean_2019,model_design,var_name='quadratic',poly_degree=2,time=time.all) %>%
+  set_names(districts) -> Tmean_quadratic_models
+
+lapply(Tmean_2019,model_design,var_name='quadratic',poly_degree=3,time=time.all) %>%
+  set_names(districts) -> Tmean_cubic_models
+```
+
+Tmax
+```{r}
+lapply(Tmax_2019,model_design,var_name='linear',poly_degree=1,time=time.all) %>%
+  set_names(districts) -> Tmax_linear_models
+
+lapply(Tmax_2019,model_design,var_name='quadratic',poly_degree=2,time=time.all) %>%
+  set_names(districts) -> Tmax_quadratic_models
+
+lapply(Tmax_2019,model_design,var_name='quadratic',poly_degree=3,time=time.all) %>%
+  set_names(districts) -> Tmax_cubic_models
+```
+
+
+
+```{r}
+create_temp <- function(my_list,model_type,mod_degree){
+  lapply(my_list, model_design,var_name=model_type,poly_degree=mod_degree,time=time.all) 
+}
+```
+
+
+
+
+```{r}
+
+repply_harmonic<- function(x2019,yharm,index){
+
+
+
+SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+
+run_model(x2019,time.all)->kl
+
+fitted(kl$l_model) - x2019 -> res
+
+
+
+
+tosine <- c()
+for (i in yharm[[index]]){
+  
+  if ( i=='SIN.1') {
+tosine <- c(tosine, 1)
+} else if ( i=='SIN.2') {
+tosine <- c(tosine, 2)
+}else if ( i=='SIN.3') {
+tosine <- c(tosine, 3)
+} else if ( i=='SIN.4') {
+tosine <- c(tosine, 4)
+} else if ( i=='SIN.5') {
+tosine <- c(tosine, 5)
+} else if ( i=='SIN.6') {
+tosine <- c(tosine, 6)
+} 
+  
+  }
+
+tocos <- c()
+for (i in yharm[[index]]){
+  
+  if ( i=='COS.1') {
+tocos <- c(tocos, 1)
+} else if ( i=='COS.2') {
+tocos <- c(tocos, 2)
+}  else if ( i=='COS.3') {
+tocos <- c(tocos, 3)
+}  else if ( i=='COS.4') {
+tocos <- c(tocos, 4)
+}  else if ( i=='COS.5') {
+tocos <- c(tocos, 5)
+}  else if ( i=='COS.6') {
+tocos <- c(tocos, 6)
+} 
+  }
+
+
+seas.har1kp <-  lm(res ~ . - 1,
+                 data.frame(SIN = SIN[,1:1], COS = COS[,1:1]))
+
+seas.har3demokp <-  lm(res ~ . - 1,
+                 data.frame(SIN = SIN[,tosine], COS = COS[,tocos]))
+
+return(list(seas.har1kp=seas.har1kp,seas.har3demokp=seas.har3demokp))
+
+}
+```
+
+
+
+
+```{r}
+repply_harmonic(Tmin_2019$Northern_Ireland,Tmin_best_harmonics$Northern_Ireland,2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+repply_Tmin_best_harmonics<- function(x2019,data){
+
+
+
+SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+
+run_model(x2019,time.all)->kl
+
+fitted(kl$l_model) - x2019 -> res
+
+
+
+for (harmonics in data) {
+tosine <- c() 
+for (i in harmonics){
+  
+  if ( i=='SIN.1') {
+tosine <- c(tosine, 1)
+} else if ( i=='SIN.2') {
+tosine <- c(tosine, 2)
+}else if ( i=='SIN.3') {
+tosine <- c(tosine, 3)
+} else if ( i=='SIN.4') {
+tosine <- c(tosine, 4)
+} else if ( i=='SIN.5') {
+tosine <- c(tosine, 5)
+} else if ( i=='SIN.6') {
+tosine <- c(tosine, 6)
+} 
+  
+  } 
+
+tocos <- c()
+for (i in harmonics){
+  
+  if ( i=='COS.1') {
+tocos <- c(tocos, 1)
+} else if ( i=='COS.2') {
+tocos <- c(tocos, 2)
+}  else if ( i=='COS.3') {
+tocos <- c(tocos, 3)
+}  else if ( i=='COS.4') {
+tocos <- c(tocos, 4)
+}  else if ( i=='COS.5') {
+tocos <- c(tocos, 5)
+}  else if ( i=='COS.6') {
+tocos <- c(tocos, 6)
+} 
+  }
+}
+
+return(list(tosine=tosine,tocos=tocos))
+
+}
+```
+
+
+
+
+```{r}
+repply_Tmin_best_harmonics(Tmin_2019$England_SW_and_S_Wales,Tmin_best_harmonics$England_SW_and_S_Wales)
+```

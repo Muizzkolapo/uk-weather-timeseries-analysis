@@ -1,0 +1,326 @@
+---
+title: "Untitled"
+author: "Muizz"
+date: "3/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+I library(forecast)
+```{r}
+ library(forecast)
+```
+
+```{r}
+ 
+
+library(magrittr)
+
+
+
+districts <- c("Northern_Ireland",
+
+               "Scotland_N",
+
+               "Scotland_E",
+
+               "Scotland_W",
+
+               "England_E_and_NE",
+
+               "England_NW_and_N_Wales",
+
+               "Midlands",
+
+               "East_Anglia",
+
+               "England_SW_and_S_Wales",
+
+               "England_SE_and_Central_S"
+
+)
+
+ 
+
+features <- c("Tmin", "Tmean", "Tmax")
+
+ 
+
+address <-
+
+  "https://www.metoffice.gov.uk/pub/data/weather/uk/climate/datasets/"
+
+ 
+
+read.ts <- function(district, feature){
+
+  c(address, feature, "/date/", district, ".txt") %>%
+
+  paste(collapse = "") %>%
+
+  read.table(header = TRUE, skip = 5, nrow = 137) %>%
+
+  subset(select = 2:13) %>%
+
+  t() %>%
+
+  as.vector() %>%
+England_E_and_NE
+  ts(frequency = 12, end = c(2020, 12))
+
+}
+
+ 
+
+ 
+
+ 
+
+Tmin <- lapply(districts, read.ts, feature = "Tmin") %>%
+
+  set_names(districts)
+
+ 
+
+Tmean <- lapply(districts, read.ts, feature = "Tmean") %>%
+
+  set_names(districts)
+
+ 
+
+Tmax <- lapply(districts, read.ts, feature = "Tmax") %>%
+
+  set_names(districts)
+
+```
+
+
+
+
+
+```{r}
+library(magrittr)
+
+# LOAD DATA ---- 
+
+#data <- read.table(file.choose(), header = TRUE)
+data_original <-  Tmax$England_NW_and_N_Wales
+data_original %>% ts(start=1884,frequency = 12, end = c(2019, 12)) -> data
+```
+
+
+
+
+```{r}
+time <- seq(from = 1884, by = 1/12, length = length(data))
+linear <- lm(data ~ poly(time, degree = 1, raw = TRUE))
+quadratic <- lm(data ~ poly(time, degree = 2, raw = TRUE))
+cubic <- lm(data ~ poly(time, degree = 3, raw = TRUE))
+AIC(linear)    # linear has lower AIC
+AIC(quadratic)
+AIC(cubic)
+```
+
+
+```{r}
+data.notrend <- data - fitted(linear)
+```
+
+```{r}
+months <- as.factor(cycle(data))
+seas.means <- lm(data.notrend ~ months - 1) # remove intercept
+seas.means
+```
+
+
+
+```{r}
+SIN <- COS <- matrix(nrow = length(time), ncol = 6)
+
+for(i in 1:6) {
+  SIN[ ,i] <- sin(2 * pi * i * time)
+  COS[ ,i] <- cos(2 * pi * i * time)
+}
+
+
+seasonal.har <- function(order){
+  assign(paste(c("seasonal.har",order), collapse = ""),
+         lm(data.notrend ~ . - 1,
+            data.frame(SIN = SIN[,1:order], COS = COS[,1:order])))
+  
+
+  
+  return(get(paste(c("seasonal.har",order), collapse = "")))
+}
+
+  
+  
+  
+# order 1
+seas.har1 <- seasonal.har(1)
+
+summary(seas.har1)
+# order 2
+seas.har2 <- seasonal.har(2)
+
+summary(seas.har2)
+
+# order 3
+seas.har3 <- seasonal.har(3) # SIN.3 not significant
+seas.har3 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,1:2], COS = COS[,1:3]))
+
+
+
+summary(seas.har3)
+
+# order 4
+seas.har4 <- seasonal.har(4) # SIN.3 COS.4 not significant
+
+# remove COS.4 first --> still SIN.3 not significant
+
+
+
+summary(seas.har4)
+
+# order 5
+seas.har5 <- seasonal.har(5) # SIN.3 SIN5 COS.4 COS.5 not significant
+# remove COS.4 first --> still SIN.3 not significant
+
+
+
+summary(seas.har5) # this is the model we did before
+
+# order 6
+seas.har6 <- seasonal.har(6) # SIN.3 SIN5 SIN.6 COS.4 COS.5 COS.6 not significant
+
+
+summary(seas.har6)
+```
+
+
+
+
+
+```{r}
+AIC(seas.har1)
+AIC(seas.har2)
+AIC(seas.har3)
+AIC(seas.means)
+```
+
+
+
+
+```{r}
+
+# TREND MODEL
+TIME <- seq(from = 1884, by = 1/12, length = length(data))
+
+
+
+
+
+trend <- lm(data ~ ., data.frame(TIME = poly(TIME, degree = 1, raw = TRUE)))
+
+
+
+
+
+SIN <- COS <- matrix(nrow = length(TIME), ncol = 6)
+
+for(i in 1:6){
+  SIN[,i] <- sin(2 * pi * i * TIME)
+  COS[,i] <- cos(2 * pi * i * TIME)
+}
+
+
+combined <- lm(data ~ ., data.frame(TIME = poly(TIME, degree = 1, raw = TRUE),
+                                    SIN = SIN[, 1:2],
+                                    COS = COS[, 1:3]))
+
+
+residuals <- data - combined %>% fitted()
+
+```
+
+```{r}
+residuals
+```
+
+
+
+```{r}
+
+
+## Order selection -- AIC 
+n <- length(residuals)
+
+norder <- 4
+
+p <- c(1:norder)-1
+q <- c(1:norder)-1
+
+aic <- matrix(0, norder, norder)
+
+for(i in 1:norder){
+  
+  for(j in 1:norder){
+    
+    modij <- arima(residuals, order = c(p[i],0,q[j]), method='ML')
+    
+    aic[i,j] <- modij$aic-2*(p[i]+q[j]+1)+2*(p[i]+q[j]+1)*n/(n-p[i]-q[j]-2)
+  }  
+}
+
+aicv <- as.vector(aic)
+
+plot(aicv, ylab="AIC values")
+
+indexaic <- which(aic == min(aic), arr.ind = TRUE)
+
+porder <- indexaic[1,1] - 1
+qorder <- indexaic[1,2] - 1
+
+# Final residuals model
+residuals.model <- arima(residuals, order = c(porder, 0, qorder), method = "ML")
+
+
+ahead <- 12
+
+pred.res <- predict(residuals.model, n.ahead = ahead)$pred
+
+
+
+TIME.NEW <- seq(from = 2020, by = 1/12, length = ahead)
+
+SIN.NEW <- COS.NEW <- matrix(nrow = length(TIME.NEW), ncol = 6)
+
+for(i in 1:6){
+  SIN.NEW[,i] <- sin(2 * pi * i * TIME.NEW)
+  COS.NEW[,i] <- cos(2 * pi * i * TIME.NEW)
+}
+
+
+pred <- predict(combined, newdata = data.frame(TIME = poly(TIME.NEW, degree = 1, raw = TRUE),
+                                       SIN = SIN.NEW[, c(1,2)],
+                                       COS = COS.NEW[, c(1,2,3)]))
+
+
+```
+
+```{r}
+y.hat <- window(data_original, start=2020)
+accuracy(pred, y.hat)
+```
+
+```{r}
+pred
+```
+
+
+

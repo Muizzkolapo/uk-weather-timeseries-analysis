@@ -1,0 +1,1791 @@
+---
+title: "MS4S09 Coursework 2 - 2020/21"
+subtitle: "Student number"
+author: "Student name"
+date: "xx/xx/2021"
+output: pdf_document
+---
+
+```{r packages, echo = FALSE}
+library(magrittr)
+library(knitr)
+library(tseries)
+
+```
+
+# Task 1 – Getting the data (10%)
+
+```{r}
+# Create a list of all regions
+districts <- c("Northern_Ireland",
+
+               "Scotland_N",
+
+               "Scotland_E",
+
+               "Scotland_W",
+
+               "England_E_and_NE",
+
+               "England_NW_and_N_Wales",
+
+               "Midlands",
+
+               "East_Anglia",
+
+               "England_SW_and_S_Wales",
+
+               "England_SE_and_Central_S"
+
+)
+
+ 
+# create a lisr of all Parameters
+features <- c("Tmin", "Tmean", "Tmax")
+
+ 
+# indicate template of the url
+address <-"https://www.metoffice.gov.uk/pub/data/weather/uk/climate/datasets/"
+
+ 
+# Create a function that reads in files from the website
+read.ts <- function(district, feature){
+
+  c(address, feature, "/date/", district, ".txt") %>%
+
+  paste(collapse = "") %>%
+
+  read.table(header = TRUE, skip = 5, nrow = 137) %>%
+
+  subset(select = 2:13) %>%
+
+  t() %>%
+
+  as.vector() %>%
+
+  ts(frequency = 12, end = c(2020, 12))
+
+}
+
+```
+
+
+```{r}
+# Function to apply the read.ts function to a list
+feature_select <- function(x) {
+  lapply(districts, read.ts, feature = x) %>%
+  set_names(districts)
+}
+
+
+```
+
+```{r}
+# Implement the feature_select  function
+all_data <- lapply(features, feature_select) %>% set_names(features)
+Tmin <- all_data$Tmin
+Tmean <- all_data$Tmean
+Tmax <- all_data$Tmax
+```
+
+
+
+
+# Task 2 – R programming (5%)
+```{r}
+# Function to return the maximum valuein nested list
+max_eval <- function(x) {
+  names(x)[which.max(unlist(lapply(x, FUN = max)))] -> region
+  month.abb[(time(x[[region]])[which.max(x[[region]])] %% 1) * 12 + 1] -> month
+  floor(time(x[[region]])[which.max(x[[region]])]) -> year
+  paste(region, ",", month, ",", year)
+}
+```
+
+
+```{r}
+# Function to return the minimum value in nested list
+min_eval <- function(x) {
+  names(x)[which.min(unlist(lapply(x, FUN = min)))] -> region
+  month.abb[(time(x[[region]])[which.min(x[[region]])] %% 1) * 12 + 1] -> month
+  floor(time(x[[region]])[which.min(x[[region]])]) -> year
+  paste(region, ",", month, ",", year)
+}
+```
+
+Note!!!!!!!!!!!!!!redo ths part some may have multiple max
+```{r}
+# Call min-max evaluating function
+max_eval(Tmin)
+min_eval(Tmin)
+max_eval(Tmax)
+min_eval(Tmax)
+max_eval(Tmean)
+min_eval(Tmean)
+```
+
+
+
+
+==========================================
+# Task 3 – Exploratory Data Analysis (30%)
+===========================================
+• Carry out an EDA of the data you have downloaded. In order to complete your analysis,
+you may find it useful to answer (but not only!) the following questions:
+
+#-------Which district is the coldest/warmest?
+We will be estimating the coldest and warmest region using the following criterias. We have the timeseries data for the mean daily maximum air temperature, the mean daily minimum and the mean of air for the regions. We will find the coldest region by assuming the region with the lowest mean air temperature would be the coldest region, while region with the highest mean temperature would be the warmest region. The assumption is that the mean is the temperature which a region is likely to be if we were to pick a temparture for it at random. 
+
+Take the mean temp accros all mean
+```{r}
+#creating a function to check average values for any time series parameter given
+avg_temp <- function(x){
+   lapply(x,mean) -> tmp_val
+names(tmp_val)[which.max(unlist(lapply(tmp_val, FUN = max)))] -> warmest
+names(tmp_val)[which.min(unlist(lapply(tmp_val, FUN = min)))] -> coldest
+result <- paste("The region with the highest temperature average for", deparse(substitute(x)), "is", warmest, ", While the region with the lowest temperature is",coldest )
+return(result)
+}
+
+```
+
+```{r}
+avg_temp(Tmean)
+avg_temp(Tmin)
+avg_temp(Tmax)
+```
+
+
+
+
+#-------Which district has the widest temperature range?
+```{r}
+widest_range <- function(takes_list){
+  lapply(takes_list, min) %>% as.data.frame() - lapply(takes_list, max) %>% as.data.frame() -> range_diff
+  range_diff[which(range_diff %in% apply(range_diff, 1, min))] ->widest_range
+  return(widest_range)
+}
+```
+
+```{r}
+widest_range(Tmean)
+widest_range(Tmin)
+widest_range(Tmax)
+```
+
+
+
+
+
+
+
+#-------Are winters/summers getting colder/hotter?
+
+1- Creating a  function to convert all timeseries object to data frame of each season(winter and summer)
+```{r}
+winter<-c("Dec","Jan","Feb","Year")
+summer<-c("Jun","Jul","Aug","Year")
+
+get_season<- function(Tparameter,seas_param){
+#convert to dataframe
+dmn <- list(month.abb, unique(floor(time(Tparameter))))
+as.data.frame(t(matrix(Tparameter , 12, dimnames = dmn))) -> ts_df
+#add year to dataframe
+ts_df$Year <- seq(1884,2020)
+#subset data into seasons
+season<- seas_param
+#add to new variable
+ts_df[season] -> season
+return(season)
+}
+
+
+```
+
+
+```{r}
+lapply(Tmean, get_season,seas_param=summer)->sum_mons
+lapply(Tmean, get_season,seas_param=winter)->win_mons
+
+
+```
+
+
+
+2- Creating a  function to merge all dataframe of each region to one, take row wise average across all regions for a year and then convert to timeseries.
+```{r}
+merge_avg_all <- function(season_mons){
+
+my_merge <- function(df1,df2){
+  merge(df1,df2,by='Year')
+}
+
+#merge all dataframe inside Parameter list to one
+Reduce(my_merge,season_mons) -> regions_tmp_seas
+
+
+#getting yearly average for all regions
+regions_tmp_seas$testMean <- rowMeans(regions_tmp_seas[,-1])
+
+
+#selecting year and average of all regions
+regions_mean <- regions_tmp_seas[c('Year','testMean')]
+
+
+#convert back to TS
+regions_mean  %>% subset(select = 2) %>%t() %>% as.vector() %>% ts(frequency = 1, end = c(2020, 1)) -> final_Temp
+
+return(final_Temp)
+
+
+}
+
+```
+
+
+```{r}
+plot(merge_avg_all(win_mons))
+plot(merge_avg_all(sum_mons))
+```
+
+
+
+
+============================================
+# Task 4 – Trend and Seasonality (20%)
+===========================================
+For each district, consider the 3 time series: max temp, min temp and mean temp. Subset
+each of the 30 time series until December 2019.This would be done using the ts() function which takes start- begining of the series, frequency of the series, and end of the series. We will create a function that subsets our time series from 1884 - 2019. This function would be called "subset_2019".
+
+```{r}
+#function to Subset each of the 30 time series until December 2019
+subset_2019 <- function(x){
+  x %>% ts(start=1884,frequency = 12, end = c(2019, 12)) 
+}
+```
+
+
+We will use the . Lapply is a function used to apply a function to every element in a list, since our 3 groups of time series are stored as a list the lapply function was used to apply our subset_2019 function on the 3 different groups of our time series data Tmin, Tmax, Tmean to subset the 30 time series data from 1884-2019.
+```{r}
+#subset all groups of time series data to december 2019 using subset_2019 function
+lapply(Tmin,subset_2019) -> Tmin_2019
+lapply(Tmean,subset_2019) -> Tmean_2019
+lapply(Tmax,subset_2019) -> Tmax_2019
+```
+
+We manually created a time vector for our time series "time.all" which will be used extensively in this analysis.
+```{r}
+# manually create time range
+time.all <- seq(from = start(Tmax_2019$Northern_Ireland)[1],
+            by = 1/frequency(Tmax_2019$Northern_Ireland),
+            length.out = length(Tmax_2019$Northern_Ireland))
+```
+
+
+
+
+
+
+#--4A••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+• Estimate the trend of each time series using linear, quadratic and cubic regression.
+Compare your results and use appropriate plots and/or tables to confirm your
+observations.
+
+
+We will create a function to apply the 3 different order of polynomial models(linear, quadratic and cubic). The function "run_model" takes a time series data and its time vector and returns its linear, quadratic and cubic models.
+```{r}
+#Function to return models
+run_model <- function(data,time) {
+   l_model <-lm(data ~ poly(time, degree = 1, raw = TRUE))
+   q_model <-lm(data ~ poly(time, degree = 2, raw = TRUE))
+   c_model <-lm(data ~ poly(time, degree = 3, raw = TRUE))
+
+  return(list(l_model=l_model,q_model=q_model,c_model=c_model))
+}
+```
+
+
+A function "plot_model" was created which returns a plot of the  time series data, linear, quadratic and cubic models all together on a single plot.
+```{r}
+#Function to return a plot
+plot_model <- function(data,time) {
+   l_var_name <-lm(data ~ poly(time, degree = 1, raw = TRUE))
+   q_var_name <-lm(data ~ poly(time, degree = 2, raw = TRUE))
+   c_var_name <-lm(data ~ poly(time, degree = 3, raw = TRUE))
+
+  main <- "Average Atlanta Temperature from 1879"
+  xlab <- "Year"
+  ylab <- "Temp"
+  
+
+ 
+# plot of linear, quadratic and cubic models ----
+plot(data,
+     main = main,
+     ylab = ylab,
+     xlab = xlab,
+     xlim = c(1880,2025),
+     lwd = 1,
+     type = "l")
+lines(time,
+      fitted(l_var_name),
+      lwd = 5,
+      col = 'red',
+      lty = "dotdash")
+lines(time,
+      fitted(q_var_name),
+      lwd = 5,
+      col = 'green',
+      lty = "dotdash")
+lines(time,
+      fitted(c_var_name),
+      lwd = 5,
+      col = 'yellow',
+      lty = "dotdash")
+}
+```
+
+
+We created a function "model_design" which returns the Akaike criterion (AIC) of the order of the model that was passed into its arguments.
+```{r}
+#Function to return a list of AIC of different models used for each group of time series
+model_design <- function(data,time,var_name,poly_degree) {
+   var_name <-lm(data ~ poly(time, degree = poly_degree, raw = TRUE))
+   Var_AIC <- AIC(var_name)
+  
+  main <- "Average Temperature from 1879"
+  xlab <- "Year"
+  ylab <- "Temp"
+
+  
+  
+  
+ 
+  return(list(Var_AIC=Var_AIC))
+}
+```
+
+
+
+
+
+We are working with data nested into a list and as such we will create a function that can apply the model_design function to a list of time series, this new function was called "apply_model_design". This function "apply_model_design" will return a list of AIC values for the linear, quadratic and cubic models.
+```{r}
+#Function that applies the model_design function to a list and returns list of list
+apply_model_design <- function(my_list){
+  lapply(my_list, model_design,var_name='linear',poly_degree=1,time=time.all) -> linear.models
+  lapply(my_list, model_design,var_name='quadratic',poly_degree=2,time=time.all)  -> quadratic.models
+  lapply(my_list, model_design,var_name='cubic',poly_degree=3,time=time.all) -> cubic.models
+  
+  all_list <- list(linear.models=linear.models,quadratic.models=quadratic.models,cubic.models=cubic.models)
+  
+  return(all_list)
+  
+}
+
+```
+
+We then used the apply_model_design on the three groups of time series data we have. The application of this function gives us the AIC value of each region for the different parameters(TMIN,TMEAN and TMAX).
+```{r}
+#apply the apply_model_design function on different groups of Time series
+apply_model_design(Tmin_2019)-> Tmin_models
+apply_model_design(Tmax_2019)-> Tmax_models
+apply_model_design(Tmean_2019)-> Tmean_models
+```
+
+
+
+
+
+
+
+#--4B••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+Select a trend model for each time series using an appropriate criteria. Are the models
+selected all the same? If not is there a pattern depending on the region and/or the
+group (max, min and mean)?
+
+We created a function "which_model" which helps select the bets model for a time series, we have the linear, quadratic and cubic AIC values for each region, we will use this function to find the model with the smallest AIC values which will signify the best model for the time series data. The which_model function when applied to a list of time series data returns a dataframe which has a column "Best.Model" which shows the row-wise minimum for each region since each row represents a region and its linear, quadratic and cubic models for a specific parameter. It was observed that all the regions had their best model as the linear model except for two regions(England_E_and_NE and East_Anglia) in the Tmax parameter.
+```{r}
+# Function to return the best model 
+which_model <- function(Model_parameter){
+Model_parameter$linear.models %>% as.data.frame() -> l
+names(l) <- c(names(Model_parameter$linear.models))
+
+Model_parameter$quadratic.models %>% as.data.frame() -> q
+names(q) <- c(names(Model_parameter$quadratic.models))
+
+Model_parameter$cubic.models %>% as.data.frame() -> c
+names(c) <- c(names(Model_parameter$cubic.models))
+
+ModelAIC <- c("Linear","Quadratic","Cubic")
+
+cbind(ModelAIC,rbind(l,q,c)) -> tminbind
+
+tminbind %>% as.vector() %>% t() %>% as.data.frame() -> new
+
+names(new) <- as.matrix(new[1, ])
+new <- new[-1, ]
+new[] <- lapply(new, function(x) type.convert(as.character(x)))
+
+new$Best.Model<-colnames(new)[apply(new,1,FUN=which.min)]
+return(new)
+}
+```
+
+```{r}
+which_model(Tmin_models)
+which_model(Tmean_models)
+which_model(Tmax_models)
+```
+
+
+Since we observe that all our model choice for all regions are uniform except England_E_and_NE and East_Anglia for the Tmax parameter, it would be interesting to see a plot of the linear model vs plot of the cubic model. We used the function "plot_model" created above to implement these plots and we observe that there is a difference in the plots for the different regions, while Northern Ireland has a more stable trend, we can see that England_E_and_NE and East_Anglia do have some cubic trend.
+```{r}
+plot_model(Tmax_2019$England_E_and_NE,time.all)
+plot_model(Tmax_2019$East_Anglia,time.all)
+plot_model(Tmax_2019$Northern_Ireland,time.all)
+```
+#----4C••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+• After removing the trend using the model selected in the previous step, use the output
+to estimate the seasonality of each time series employing 
+1• averaging models.
+2• sine-cosine models. 
+3• Compare your results and use appropriate plots and/or tables to confirm your
+observations.
+
+
+#----removing Trend using averaging
+We will create a function that removes the trend component and returns its monthly average. The function takes two arguments which are the time series data and the polynomial model that bests fit it according to the Akaike criterion. All models except  England_E_and_NE and East_Anglia for the Tmax parameter have a linear model as their best model. 
+```{r}
+
+return_month_avg <- function(takes_data,model_type){
+
+run_model(takes_data,time.all) -> model.result
+
+data.notrend <- takes_data - fitted(model.result[[model_type]])
+
+tapply(data.notrend, cycle(takes_data), mean)  %>% as.data.frame() -> fin_month_avg
+colnames(fin_month_avg) <- c('Season_Mean')
+mymonths <- c("Jan","Feb","Mar",
+              "Apr","May","Jun",
+              "Jul","Aug","Sep",
+              "Oct","Nov","Dec")
+#add abbreviated month name
+fin_month_avg$Month <- mymonths
+return(fin_month_avg)
+
+
+}
+```
+
+
+#-----Subsetting cubic and linear model for TMAX
+We will split the Tmax time series data into two groups the linear and the cubic groups, this would make it easier to apply functions which are specific to the best model for each region.
+```{r}
+Tmax_2019[-c(5,8)] -> Tmax_2019_ln
+
+Tmax_2019[c(5,8)]-> Tmax_2019_cubic
+```
+
+
+
+We will then use the return_month_avg to return the seasonal means of each of the different regions based on their best trend model.
+```{r}
+#----Estimate seasonal average for All linear model
+lapply(Tmin_2019, return_month_avg,model_type="l_model") %>% set_names(names(Tmin_2019)) -> Tmin_monthly_avg
+lapply(Tmean_2019, return_month_avg,model_type="l_model") %>% set_names(names(Tmin_2019)) -> Tmean_monthly_avg
+lapply(Tmax_2019_ln, return_month_avg,model_type="l_model") %>% set_names(names(Tmax_2019_ln)) -> Tmax_monthly_avg_ln
+
+#----Estimate seasonal average for All cubic model
+lapply(Tmax_2019_cubic, return_month_avg,model_type="c_model") %>% set_names(names(Tmax_2019_cubic)) -> Tmean_monthly_avg_cubic
+```
+
+```{r}
+Tmin_monthly_avg
+```
+
+```{r}
+Tmean_monthly_avg
+```
+
+```{r}
+Tmax_monthly_avg_ln
+```
+
+```{r}
+Tmean_monthly_avg_cubic
+```
+
+
+
+#-----Estimate seasonality with seasonal average
+The seasonality was estimated using the seasonal means method. We created a function return_seas_avg which takes the time series data and model type. The function models the inputs and returns the seasonal means for each of the time series provided to it.
+```{r}
+return_seas_avg <- function(data,model_type){
+#one region since all months are the same
+months <- as.factor(cycle(Tmin_2019$Northern_Ireland))
+# Apply the run_model function to the data to get the specified model
+run_model(data, time.all) -> model.result
+# Get the residuals from the data which does not have the trend
+data.notrend <- data - fitted(model.result[[model_type]])
+seas.means <- lm(data.notrend ~ months - 1)
+
+
+# plot data with no trend and seasonal means estimation
+#plot(data.notrend,main = main,ylab = ylab,xlab = xlab,lwd = 2,type = "l")
+#lines(time.all,fitted(seas.means),lwd = 0.3,col = 'green',lty = 1)
+
+return(seas.means)
+}
+```
+
+We used lapply to apply the return_seas_avg to the list of time series for the different parameters Tmin, Tmax, Tmean.
+```{r}
+lapply(Tmin_2019, return_seas_avg,model_type="l_model") %>% set_names(names(Tmin_2019)) -> Tmin_seas_est
+lapply(Tmean_2019, return_seas_avg,model_type="l_model") %>% set_names(names(Tmin_2019)) -> Tmean_seas_est
+lapply(Tmax_2019_ln, return_seas_avg,model_type="l_model") %>% set_names(names(Tmax_2019_ln)) -> Tmax_seas_est_ln
+
+#All cubic model
+lapply(Tmax_2019_cubic, return_seas_avg,model_type="c_model") %>% set_names(names(Tmax_2019_cubic)) -> Tmax_seas_est_cubic
+#joined max
+do.call(c, list(Tmax_seas_est_ln, Tmax_seas_est_cubic)) -> Tmax_ln_nd_cub_seas
+```
+
+
+```{r}
+# seasonal means validation check
+length(names(Tmin_seas_est))
+length(names(Tmean_seas_est))
+length(names(Tmax_ln_nd_cub_seas))
+```
+
+
+
+
+#----Estimating seasonality using harmonic mean
+We created a return harmonic function to give the harmonic mean of a time series data. We perform a trend check on the time series and remove the specified trend type(l_model,c_model and q_model). We then get the residuals of the trend type by substracting the data from the fitted data. In our dataset since all our best models are linear except for England_E_and_NE and East_Anglia for the Tmax parameter this means all our models will be linear except  these two which will be cubic.
+```{r}
+# Function to return the harmonic mean of a time series data
+return_harmonic <- function(takes_data,trend_type) {
+  # Apply the run_model function to the data to get the specified model 
+  run_model(takes_data, time.all) -> model.result
+  
+  # Get the residuals from the data which does not have the trend
+  data.notrend <- takes_data - fitted(model.result[[trend_type]])
+  
+  # Create a matrix of SINE and COSINE values
+  SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+  
+  # Function to return harmonic of specified order
+  seasonal.har <- function(order) {
+    assign(paste(c("seasonal.har", order), collapse = ""),
+           lm(data.notrend ~ . - 1,
+              data.frame(SIN = SIN[, 1:order], COS = COS[, 1:order])))
+    
+    #plot(data.notrend,main = paste("Milk Production without trend and harmonic", order),lwd = 2,type = "l")
+    
+    #lines(time.all,fitted(get(paste(c("seasonal.har",order), collapse = ""))),lwd = 3,col = 'green',lty = 1)
+    
+    #return(summary(get(paste(
+      #c("seasonal.har", order), collapse = ""
+    #))))
+    
+    return(get(paste(c("seasonal.har",order), collapse = "")))
+    
+  }
+  
+  
+  
+  # order 1
+  seas.har1 <- seasonal.har(1)
+  
+  # order 2
+  seas.har2 <- seasonal.har(2)
+  
+  # order 3
+  seas.har3 <- seasonal.har(3) # SIN.3 not significant
+  
+  # order 4
+  seas.har4 <- seasonal.har(4) # SIN.3 COS.4 not significant
+  
+  
+  # order 5
+  seas.har5 <-
+    seasonal.har(5) # SIN.3 SIN5 COS.4 COS.5 not significant
+  
+  
+  
+  # order 6
+  seas.har6 <-
+    seasonal.har(6) # SIN.3 SIN5 SIN.6 COS.4 COS.5 COS.6 not significant
+  
+  
+  return(
+    list(
+      seas.har1 = seas.har1,
+      seas.har2 = seas.har2,
+      seas.har3 = seas.har3,
+      seas.har4 = seas.har4,
+      seas.har5 = seas.har5,
+      seas.har6 = seas.har6
+    )
+  )
+}
+```
+
+
+
+
+Here we apply the return_harmonic function to all our time series data, after this we can check for models that are significant at a p-value of 0.05.
+```{r}
+# Apply the return_harmonic function to all time series 
+lapply(Tmin_2019, return_harmonic,trend_type="l_model") %>% set_names(names(Tmin_2019)) -> Tmin_harmonic
+lapply(Tmean_2019, return_harmonic,trend_type="l_model") %>% set_names(names(Tmean_2019)) -> Tmean_harmonic
+lapply(Tmax_2019_ln, return_harmonic,trend_type="l_model") %>% set_names(names(Tmax_2019_ln)) -> Tmax_harmonic_ln
+#remove the cubic trend from England_E_and_NE and East_Anglia for the Tmax parameter
+lapply(Tmax_2019_cubic, return_harmonic,trend_type="c_model") %>% set_names(names(Tmax_2019_cubic)) -> Tmax_harmonic_cubic
+```
+
+
+
+#---------------- comparng seasonal means and harmon
+We created a function to return the significant models for a specific region and harmonic. We want to see only values with a p-value lower than that of the null hypothesis.
+```{r}
+
+# p-value lesser than 0.05 shows significant that null is false
+singular_harmonic <- function(x){
+  summary(x) -> temp
+  temp$coefficients %>% as.data.frame() -> temp2
+  temp2<-temp2[temp2$`Pr(>|t|)` < 0.05, ] 
+  temp2$Harmonic.Model <- row.names(temp2)
+  #return(temp2)
+  
+
+}
+
+```
+
+```{r}
+#singular_harmonic(Tmax_harmonic_cubic$East_Anglia$seas.har6)
+```
+
+
+
+We create this function to take a list and apply all the function region_harmonics to all the elements in the list provided in the argument.
+```{r}
+
+region_harmonics <- function(takes_list){
+lapply(takes_list,singular_harmonic) %>%  set_names(names(takes_list)) -> significant_mods
+  return(significant_mods)
+}
+
+
+```
+
+
+
+we create a function that applies the region_harmonics function to a nested list. This would return only the models that has passed the null hypothesis test. This would contain only significant models.
+```{r}
+grouped_harmonica <- function(x){
+  lapply(x,region_harmonics) %>% set_names(names(x)) -> Tmin_best_harmonics
+  return(Tmin_best_harmonics)
+}
+
+grouped_harmonica(Tmin_harmonic) -> Tmin_indexed_harmonics
+grouped_harmonica(Tmean_harmonic) -> Tmean_indexed_harmonics
+grouped_harmonica(Tmax_harmonic_ln) -> Tmax.ln_indexed_harmonics
+grouped_harmonica(Tmax_harmonic_cubic) -> Tmax.cub_indexed_harmonics
+```
+
+
+
+We created a function that checks the unique models for each element in a list. This unique model would be used to then recreate the harmonic models.
+```{r}
+best_harm <- function(takes_list){
+  lapply(takes_list, unique) %>% set_names(names(takes_list)) -> significant_harmonics
+  return(significant_harmonics)
+}
+```
+
+We retrieved the best harmonic for each region i.e all harmonics with P-value lesser than the null hypothesis p-value of 0.05.
+```{r}
+Tmin_best_harmonics <- best_harm(Tmin_indexed_harmonics)
+Tmean_best_harmonics <- best_harm(Tmean_indexed_harmonics)
+Tmax.ln_best_harmonics <- best_harm(Tmax.ln_indexed_harmonics)
+Tmax.cub_best_harmonics <- best_harm(Tmax.cub_indexed_harmonics)
+```
+
+
+We applied the unique function to all our best model to retrieve only unique models.
+```{r}
+#unique(Tmin_best_harmonics)
+best_model_list <- c(Tmin_best_harmonics,Tmean_best_harmonics,Tmax.ln_best_harmonics,Tmax.cub_best_harmonics)
+lapply(best_model_list, unique) %>%  set_names(names(best_model_list)) -> all_unique_best
+```
+
+
+We have 5 different unique configurations for our models, this would be used to create 5 different functions, each function will be specific to the unique model configurations found above.
+```{r}
+length(unique(all_unique_best) )
+```
+
+We view all the unique model configurations in all the time series data.
+```{r}
+unique(all_unique_best) 
+```
+
+
+#-------------create functions to map models
+A function rerun_harmonic1 was created for time series which have their significant harmonic models as "SIN.1" "SIN.2" "COS.1" "COS.2" and  "SIN" "COS". The function takes the time series data and the best trend model for it l_model, q_model or c_model and returns the lowest Akaike criterion among all the harmonic models in the function.
+```{r}
+# Function "SIN.1" "SIN.2" "COS.1" "COS.2" and  "SIN" "COS"
+rerun_harmonic1 <- function(takes_data,trend_type) {
+  # Apply the run_model function to the data to get the specified model
+  run_model(takes_data, time.all) -> model.result
+  
+  # Get the residuals from the data which does not have the trend
+  data.notrend <- takes_data - fitted(model.result[[trend_type]])
+  
+  # Create a matrix of SINE and COSINE values
+  SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+  
+  seas.har1 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,1:1], COS = COS[,1:1]))
+  
+  
+  seas.har2 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2)]))
+  
+  
+  
+
+list(seas.har1=seas.har1,seas.har2=seas.har2) -> myl
+
+lapply(myl, AIC)  -> mlk
+
+
+names(mlk)[which.min(unlist(lapply(mlk, FUN = min)))] -> res
+  
+return(mlk)
+  
+  
+}
+```
+
+
+
+
+A function rerun_harmonic2 was created for time series which have their significant harmonic models as SIN = SIN[,1:1], COS = COS[,1:1]), SIN = SIN[,1:1], COS = COS[,1:1]) and SIN[,c(1,2)], COS = COS[,c(1,2,4)]).
+```{r}
+ rerun_harmonic2 <- function(takes_data,trend_type) {
+  # Apply the run_model function to the data to get the specified model
+  run_model(takes_data, time.all) -> model.result
+  
+  # Get the residuals from the data which does not have the trend
+  data.notrend <- takes_data - fitted(model.result[[trend_type]])
+  
+  # Create a matrix of SINE and COSINE values
+  SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+  
+  seas.har1 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,1:1], COS = COS[,1:1]))
+  
+  
+  seas.har2 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2)]))
+  
+  
+   seas.har3_B <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2,4)]))
+   
+
+
+list(seas.har1=seas.har1,seas.har2=seas.har2,seas.har3_B=seas.har3_B) -> myl
+
+lapply(myl, AIC)  -> mlk
+
+
+names(mlk)[which.min(unlist(lapply(mlk, FUN = min)))] -> res
+  
+  return(mlk)
+  
+  
+}
+```
+
+
+
+
+
+A function rerun_harmonic3 was created for time series which have their significant harmonic models as SIN = SIN[,1:1], COS = COS[,1:1]), SIN = SIN[,1:1], COS = COS[,1:1]) and SIN = SIN[,c(1,2,5)], COS = COS[,c(1,2)]).
+```{r}
+rerun_harmonic3 <- function(takes_data,trend_type) {
+  # Apply the run_model function to the data to get the specified model
+  run_model(takes_data, time.all) -> model.result
+  
+  # Get the residuals from the data which does not have the trend
+  data.notrend <- takes_data - fitted(model.result[[trend_type]])
+  
+  # Create a matrix of SINE and COSINE values
+  SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+  
+  seas.har1 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,1:1], COS = COS[,1:1]))
+  
+  
+  seas.har2 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2)]))
+  
+  
+   seas.har3_C <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2,5)], COS = COS[,c(1,2)]))
+   
+
+list(seas.har1=seas.har1,seas.har2=seas.har2,seas.har3_C=seas.har3_C) -> myl
+
+lapply(myl, AIC)  -> mlk
+
+
+names(mlk)[which.min(unlist(lapply(mlk, FUN = min)))] -> res
+  
+  return(mlk)
+  
+
+  
+  
+}
+```
+
+
+
+
+A function rerun_harmonic4 was created for time series which have their significant harmonic models as SIN = SIN[,1:1], COS = COS[,1:1]), SIN = SIN[,1:1], COS = COS[,1:1]) and SIN = SIN[,c(1,2)], COS = COS[,c(1,2,3)]).
+```{r}
+rerun_harmonic4 <- function(takes_data,trend_type) {
+  # Apply the run_model function to the data to get the specified model
+  run_model(takes_data, time.all) -> model.result
+  
+  # Get the residuals from the data which does not have the trend
+  data.notrend <- takes_data - fitted(model.result[[trend_type]])
+  
+  # Create a matrix of SINE and COSINE values
+  SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+  
+  seas.har1 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,1:1], COS = COS[,1:1]))
+  
+  
+  seas.har2 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2)]))
+  
+  
+   seas.har3_A <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2,3)]))
+  
+
+list(seas.har1=seas.har1,seas.har2=seas.har2,seas.har3_A=seas.har3_A) -> myl
+
+lapply(myl, AIC)  -> mlk
+
+
+names(mlk)[which.min(unlist(lapply(mlk, FUN = min)))] -> res
+  
+  return(mlk)
+  
+  
+}
+```
+
+
+
+
+A function rerun_harmonic5 was created for time series which have their significant harmonic models as SIN = SIN[,1:1], COS = COS[,1:1]), SIN = SIN[,1:1], COS = COS[,1:1]), SIN = SIN[,c(1,2)], COS = COS[,c(1,2,3)]) and SIN = SIN[,c(1,2,4)], COS = COS[,c(1,2,3)]).
+```{r}
+ rerun_harmonic5 <- function(takes_data,trend_type) {
+  # Apply the run_model function to the data to get the specified model
+  run_model(takes_data, time.all) -> model.result
+  
+  # Get the residuals from the data which does not have the trend
+  data.notrend <- takes_data - fitted(model.result[[trend_type]])
+  
+  # Create a matrix of SINE and COSINE values
+  SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+  
+  seas.har1 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,1:1], COS = COS[,1:1]))
+  
+  
+  seas.har2 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2)]))
+  
+  
+   seas.har3 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2)], COS = COS[,c(1,2,3)]))
+   
+   seas.har4 <-  lm(data.notrend ~ . - 1,
+                 data.frame(SIN = SIN[,c(1,2,4)], COS = COS[,c(1,2,3)]))
+  
+
+
+list(seas.har1=seas.har1,seas.har2=seas.har2,seas.har3=seas.har3,seas.har4=seas.har4) -> myl
+
+lapply(myl, AIC)  -> mlk
+
+
+which.min(unlist(lapply(mlk, FUN = min))) -> res
+  
+  return(mlk)
+  
+
+  
+}
+```
+
+
+
+#-------------Subset all the time series into groups of significant harmonic model
+We have 5 different configurations of significant harmonnic models, we will group each of our time series parameter (Tmin,Tmean and Tmax) to th group they belong to in these 5 configurations after which their respective function is then applied on each subset.  
+#-------------Subset  Tmin_best_harmonics into significant harmonic groups
+```{r}
+Tmin_best_dual <- Tmin_2019[-c(3,9)] #function rerun_harmonic1 would work for this
+lapply(Tmin_best_dual, rerun_harmonic1,trend_type="l_model") %>% set_names(names(Tmin_best_dual)) -> significant_Tmin_dual
+############################################################################################
+
+Tmin_best_trio1 <- Tmin_2019[c(3)] # function rerun_harmonic2 would work for this
+lapply(Tmin_best_trio1, rerun_harmonic2,trend_type="l_model") %>% set_names(names(Tmin_best_trio1)) -> significant_Tmin_trio1
+############################################################################################
+
+Tmin_best_trio2 <- Tmin_2019[c(9)] # rerun_harmonic3 would work on this
+lapply(Tmin_best_trio2, rerun_harmonic3,trend_type="l_model") %>% set_names(names(Tmin_best_trio2)) -> significant_Tmin_trio2
+############################################################################################
+```
+
+
+#------------- Subset  Tmean_best_harmonics into significant harmonic groups
+
+```{r}
+Tmean_best_dual <- Tmean_2019[-c(4,10)] #rerun_harmonic1 will work for this
+lapply(Tmean_best_dual, rerun_harmonic1,trend_type="l_model") %>% set_names(names(Tmean_best_dual)) -> significant_Tmean_dual
+############################################################################################
+
+
+Tmean_best_trio1 <- Tmean_2019[c(4)] # rerun_harmonic4 will work for this
+lapply(Tmean_best_trio1, rerun_harmonic4,trend_type="l_model") %>% set_names(names(Tmean_best_trio1)) -> significant_Tmean_trio1
+############################################################################################
+
+Tmean_best_trio2 <- Tmean_2019[c(10)] #rerun_harmonic3 this function works for this
+lapply(Tmean_best_trio2, rerun_harmonic1,trend_type="l_model") %>% set_names(names(Tmean_best_trio2)) -> significant_Tmean_trio2
+############################################################################################
+```
+
+
+#------------- Subset  Tmax.ln_best_harmonics into significant harmonic groups
+
+```{r}
+Tmax.ln_best_dual <- Tmax_2019_ln[c(6,8)] #rerun_harmonic1 will work for this
+lapply(Tmax.ln_best_dual, rerun_harmonic1,trend_type="l_model") %>% set_names(names(Tmax.ln_best_dual)) -> significant_Tmax.ln_dual
+############################################################################################
+
+Tmax.ln_best_trio1 <- Tmax_2019_ln[-c(6,7,8)] # rerun_harmonic4 this will work for this
+lapply(Tmax.ln_best_trio1, rerun_harmonic4,trend_type="l_model") %>% set_names(names(Tmax.ln_best_trio1)) -> significant_Tmax.ln_trio1
+############################################################################################
+
+Tmax.ln_best_trio2 <- Tmax_2019_ln[c(7)] # rerun_harmonic5 should work for this
+lapply(Tmax.ln_best_trio2, rerun_harmonic5,trend_type="l_model") %>% set_names(names(Tmax.ln_best_trio2)) -> significant_Tmax.ln_trio2
+############################################################################################
+
+
+```
+
+
+#------------- Subset Tmax.cub_best_harmonics harmonic into significant harmonic groups
+```{r}
+#Tmax.cub_best_harmonics[c(1,2)]
+Tmax.cubic_best_dual <- Tmax_2019_cubic[c(1,2)] #rerun_harmonic1 this functipn will work for this
+lapply(Tmax.cubic_best_dual, rerun_harmonic1,trend_type="c_model") %>% set_names(names(Tmax.cubic_best_dual)) -> significant_Tmax.cub_trio2
+############################################################################################
+```
+
+
+
+
+
+#--4D••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+• Select a seasonal model for each time series using an appropriate criteria. Are the
+models selected all the same? If not is there a pattern depending on the region and/or
+the group (max, min and mean)?
+
+
+
+#---- create a function that selects best model for all different parameters
+We created a function get_min_AIC that takes 3 arguments and returns the harmonic model with the lowest Akaike criterion. In this function we combine the AIC of the seasonal average model of the time series and the AIC of the harmonic model and then return the model with the lowest AIC.
+```{r}
+get_min_AIC <- function(x,y,z){
+AIC(z[[x]]) -> seas.avg
+y [[x]]  -> temp1
+temp1 <- c(temp1, seas.avg=seas.avg)
+
+names(temp1)[which.min(unlist(lapply(temp1, FUN = min)))] -> res
+
+
+return(res)
+}
+
+```
+
+
+
+-------ALl TMIN
+We used the do.call function to re-combine our different configurations for TMIN parameter into one list for each parameter. The get_min_AIC method was then applied on each time series to return the model with the lowest AIC and we observe that seasonal average was not the best for any of the time series in this group.
+```{r}
+do.call(c, list(significant_Tmin_dual, significant_Tmin_trio1,significant_Tmin_trio2)) -> Tmin_harm_final
+lapply(districts, get_min_AIC,y=Tmin_harm_final,z=Tmin_seas_est) %>% set_names(districts) -> best_model_TMIN
+best_model_TMIN %>% as.data.frame()
+```
+
+-------ALl TMEAN
+We used the do.call function to re-combine our different configurations for TMEAN parameter into one list for each parameter. The get_min_AIC method was then applied on each time series to return the model with the lowest AIC and we observe that seasonal average was not the best for any of the time series in this group.
+```{r}
+do.call(c, list(significant_Tmean_dual, significant_Tmean_trio1,significant_Tmean_trio2)) -> Tmean_harm_final
+lapply(districts, get_min_AIC,y=Tmean_harm_final,z=Tmean_seas_est) %>% set_names(districts) -> best_model_TMean
+best_model_TMean %>% as.data.frame() 
+```
+
+----- ALL Tmax
+We combined the time series with a linear trend into a single list and applied the get_min_AIC and the same was done for time series with a cubic trend.
+```{r}
+do.call(c, list(significant_Tmax.ln_dual, significant_Tmax.ln_trio1,significant_Tmax.ln_trio2)) -> Tmax_harm_final_ln
+
+significant_Tmax.cub_trio2 -> Tmax_harm_final_cubic
+
+linear_districts <- names(Tmax_2019)[-c(5,8)]
+lapply(linear_districts, get_min_AIC,y=Tmax_harm_final_ln,z=Tmax_seas_est_ln) %>% set_names(linear_districts) -> best_model_TMax_ln
+best_model_TMax_ln%>% as.data.frame()
+
+cubic_district <- names(Tmax_2019)[c(5,8)]
+lapply(cubic_district, get_min_AIC,y=Tmax_harm_final_cubic,z=Tmax_seas_est_cubic) %>% set_names(cubic_district) -> best_model_TMax_cubic
+best_model_TMax_cubic%>% as.data.frame()
+
+
+
+```
+
+We used the unique function to check the unique best models for each group of our time series and we can see we have 5 differnt best models distributed among the different groups.
+```{r}
+list(unique(best_model_TMIN),unique(best_model_TMean),unique(best_model_TMax_ln),unique(best_model_TMax_cubic)) %>%  unlist() %>% unique()
+```
+```{r}
+list(unique(best_model_TMIN),unique(best_model_TMean),unique(best_model_TMax_ln),unique(best_model_TMax_cubic)) %>%  unlist() %>% unique() %>%  length()
+
+```
+
+
+
+
+#--4E••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+Based on the fact that we have 5 different best model distributed among the different groups of time series, we will create 5 functions to implement the best models.
+
+```{r}
+# function for model with Seasonal harmonic 2 as the best model
+combined_mod_har2 <- function(data,poly_order){
+  
+    SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+
+  seas.har2 <- lm(data ~ .,
+                 data=data.frame(TIME = poly(time.all, poly_order, raw =TRUE),
+                             SIN = SIN[,c(1,2)],
+                             COS = COS[,c(1,2)]))
+
+  
+  #print(summary(get(paste(c("seasonal.har",order), collapse = ""))))
+  
+  return(seas.har2)
+  
+}
+```
+
+
+
+
+```{r}
+# function for model with Seasonal harmonic 3 A as the best model
+combined_mod_har3_A <- function(data,poly_order){
+  
+    SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+
+  seas.har3_A <- lm(data ~ .,
+                  data = data.frame(TIME = poly(time.all, poly_order, raw =TRUE),
+                             SIN = SIN[,c(1,2)],
+                             COS = COS[,c(1,2,3)]))
+
+  
+  #print(summary(get(paste(c("seasonal.har",order), collapse = ""))))
+  
+  return(seas.har3_A)
+  
+}
+```
+
+
+
+
+```{r}
+# function for model with Seasonal harmonic 3 B as the best model
+combined_mod_har3_B <- function(data,poly_order){
+  
+    SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+
+  seas.har3_B <- lm(data ~ .,
+                  data = data.frame(TIME = poly(time.all, poly_order, raw =TRUE),
+                             SIN = SIN[,c(1,2)],
+                             COS = COS[,c(1,2,4)]))
+  
+
+
+  
+  #print(summary(get(paste(c("seasonal.har",order), collapse = ""))))
+  
+  return(seas.har3_B)
+  
+}
+```
+
+
+
+
+```{r}
+# function for model with Seasonal harmonic 3 C as the best model
+combined_mod_har3_C <- function(data,poly_order){
+  
+    SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+
+  seas.har3_C <- lm(data ~ .,
+                  data = data.frame(TIME = poly(time.all, poly_order, raw =TRUE),
+                             SIN = SIN[,c(1,2,5)],
+                             COS = COS[,c(1,2)]))
+
+  
+  #print(summary(get(paste(c("seasonal.har",order), collapse = ""))))
+  
+  return(seas.har3_C)
+  
+  
+}
+```
+
+
+```{r}
+# function for model with Seasonal harmonic 4 as the best model
+combined_mod_har4 <- function(data,poly_order){
+  
+    SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+
+  seas.har4 <- lm(data ~ .,
+                  data = data.frame(TIME = poly(time.all, poly_order, raw =TRUE),
+                             SIN = SIN[,c(1,2,4)],
+                             COS = COS[,c(1,2,3)]))
+  
+
+
+  
+  #print(summary(get(paste(c("seasonal.har",order), collapse = ""))))
+  
+  return(seas.har4)
+  
+  
+}
+```
+
+
+
+
+
+We subsetted the time series in each group to the group of best harmonic they belong to and applied the respective function after which we combined all the outputs back into a single list.
+```{r}
+#subset for each model that belog to specific hars
+Tmin_har2_district <- Tmin_2019[names(best_model_TMIN[-c(3,9)])]
+lapply(Tmin_har2_district, combined_mod_har2,poly_order=1) -> final_model_Tmin_har2
+#####################################################################
+
+Tmin_har3_B_district <- Tmin_2019[names(best_model_TMIN[c(3)])]
+lapply(Tmin_har3_B_district, combined_mod_har3_B,poly_order=1) -> final_model_Tmin_har3_B
+#####################################################################
+
+Tmin_har3_C_district <- Tmin_2019[names(best_model_TMIN[c(9)])]
+lapply(Tmin_har3_C_district, combined_mod_har3_C,poly_order=1) -> final_model_Tmin_har3_C
+#####################################################################
+
+
+#######################COMBINE ALL TMIN##############################################
+
+do.call(c, list(final_model_Tmin_har2, final_model_Tmin_har3_B,final_model_Tmin_har3_C)) -> Tmin_final_model  
+```
+
+```{r}
+# time series count validation check
+length(names(Tmin_final_model))
+```
+
+
+
+
+
+```{r}
+Tmean_har2_district <-Tmean_2019[names(best_model_TMean[-c(4)])]
+lapply(Tmean_har2_district, combined_mod_har2,poly_order=1) -> final_model_Tmean_har2
+#####################################################################
+
+
+Tmean_har3_A_district <- Tmean_2019[names(best_model_TMean[c(4)])]
+lapply(Tmean_har3_A_district, combined_mod_har3_A,poly_order=1) -> final_model_Tmean_har3_A
+#####################################################################
+
+#######################COMBINE ALL TMEAN##############################################
+
+do.call(c, list(final_model_Tmean_har2,final_model_Tmean_har3_A)) -> Tmean_final_model  
+```
+
+```{r}
+# time series count validation check
+length(names(Tmean_final_model))
+```
+
+
+```{r}
+Tmax_har3_A_district_ln <-Tmax_2019[names(best_model_TMax_ln[1:5])]
+lapply(Tmax_har3_A_district_ln, combined_mod_har3_A,poly_order=1) -> final_model_Tmax_har3_A
+#####################################################################
+
+
+Tmax_har2_district_ln <-Tmax_2019[names(best_model_TMax_ln[c(6,8)])]
+lapply(Tmax_har2_district_ln, combined_mod_har2,poly_order=1) -> final_model_Tmax_ln_har2
+#####################################################################
+
+Tmax_har4_district_ln <-Tmax_2019[names(best_model_TMax_ln[c(7)])]
+lapply(Tmax_har4_district_ln, combined_mod_har4,poly_order=1) -> final_model_Tmax_ln_har4
+#####################################################################
+
+Tmax_har2_district_cb <-Tmax_2019[names(best_model_TMax_cubic)]
+lapply(Tmax_har2_district_cb, combined_mod_har2,poly_order=3) -> final_model_Tmax_cb_har2
+#####################################################################
+#######################COMBINE ALL TMAX##############################################
+
+do.call(c, list(final_model_Tmax_har3_A, final_model_Tmax_ln_har2,final_model_Tmax_cb_har2,final_model_Tmax_ln_har4)) -> Tmax_final_model  
+```
+
+
+
+```{r}
+# time series count validation check
+length(names(Tmax_final_model))
+```
+
+combined_seas_avg(Tmax_seasavg_district_ln$Northern_Ireland,"l_model")
+combined_seas_avg(Tmax_seasavg_district_ln$Northern_Ireland,"c_model")
+
+
+
+#---FINAL MODEL
+We combined all the different models for the time series into a final variable.
+```{r}
+list(Tmin_final_model=Tmin_final_model, Tmean_final_model=Tmean_final_model,Tmax_final_model=Tmax_final_model) -> final
+```
+
+
+
+
+#--4F••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+A function return_quad_sin_cos was created to Estimate trend and seasonality using a combined quadratic and sin-cosine (of order 2) models.
+
+```{r}
+# Function to return the harmonic mean of a time series data
+return_quad_sin_cos <- function(takes_data) {
+  # Apply the run_model function to the data to get the specified model
+  run_model(takes_data, time.all) -> model.result
+  
+  # Get the residuals from the data which does not have the trend
+  data.notrend <- takes_data - fitted(model.result$q_model)
+  
+  # Create a matrix of SINE and COSINE values
+  SIN <- COS <- matrix(nrow = length(time.all), ncol = 6)
+  for (i in 1:6) {
+    SIN[, i] <- sin(2 * pi * i * time.all)
+    COS[, i] <- cos(2 * pi * i * time.all)
+  }
+  
+  # Function to return harmonic of specified order
+  seasonal.har <- function(order) {
+    assign(paste(c("seasonal.har", order), collapse = ""),
+           lm(data.notrend ~ . - 1,
+              data.frame(SIN = SIN[, 1:order], COS = COS[, 1:order])))
+    
+    return(get(paste(c("seasonal.har",order), collapse = "")))
+    
+  }
+  
+  
+  # order 2
+  seas.har2 <- seasonal.har(2)
+  
+  
+  
+  return(seas.har2)
+}
+```
+
+
+```{r}
+return_quad_sin_cos(Tmin_2019$Northern_Ireland)
+```
+We created a function to apply the return_quad_sin_cos on a nested list. The final outputs were joined into a list and called test.
+```{r}
+#function that applies lapply
+def_temp <- function(takes_list){
+  lapply(takes_list, return_quad_sin_cos) %>% set_names(names(takes_list))  -> res
+  return(res)
+}
+
+list_param <- list("Tmin_2019"=Tmin_2019,"Tmean_2019"=Tmean_2019,"Tmax_2019"=Tmax_2019)
+
+lapply(list_param, def_temp)  -> test
+```
+
+
+
+
+
+# Task 5 – ARMA and Forecasting (25%)
+
+#--5A••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+• Using the final and the test model estimated in the previous task, remove trend and
+seasonality from each of the 30 time series. You will now have 60 residuals time series.
+
+
+```{r}
+final$Tmin_final_model -> Tmin_final_model
+final$Tmean_final_model -> Tmean_final_model
+final$Tmax_final_model -> Tmax_final_model
+```
+
+
+```{r}
+residuals_func <- function(ts_data,final_model){
+residuals <- ts_data - final_model %>% fitted()
+return(residuals)
+}
+```
+
+```{r}
+mapply(residuals_func, Tmin_2019, Tmin_final_model, SIMPLIFY = FALSE) -> residual_tmin
+mapply(residuals_func, Tmean_2019, Tmean_final_model, SIMPLIFY = FALSE) -> residual_tmean
+mapply(residuals_func, Tmax_2019, Tmax_final_model, SIMPLIFY = FALSE) -> residual_tmax
+```
+
+
+
+
+#--5B••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+• Fit the residuals with an appropriate ARMA model.
+
+
+```{r}
+lapply(residual_tmin, adf.test) %>% set_names(names(residual_tmin)) -> adftmin
+lapply(residual_tmean, adf.test) %>% set_names(names(residual_tmean)) -> adftmean
+lapply(residual_tmax, adf.test) %>% set_names(names(residual_tmax)) -> adftmax
+```
+
+
+```{r}
+lapply(residual_tmin, acf) %>% set_names(names(residual_tmin)) -> adftmin
+lapply(residual_tmean, acf) %>% set_names(names(residual_tmean)) -> adftmean
+lapply(residual_tmax, acf) %>% set_names(names(residual_tmax)) -> adftmax
+```
+
+
+```{r}
+lapply(residual_tmin, pacf) %>% set_names(names(residual_tmin)) -> adftmin
+lapply(residual_tmean, pacf) %>% set_names(names(residual_tmean)) -> adftmean
+lapply(residual_tmax, pacf) %>% set_names(names(residual_tmax)) -> adftmax
+```
+
+
+
+
+
+
+
+```{r}
+fit_func <- function(residuals){
+## Order selection -- AIC 
+n <- length(residuals)
+norder <- 4
+
+p <- c(1:norder)-1
+q <- c(1:norder)-1
+
+aic <- matrix(0, norder, norder)
+
+for(i in 1:norder){
+  
+  for(j in 1:norder){
+    
+    modij <- arima(residuals, order = c(p[i],0,q[j]), method='ML')
+    
+    aic[i,j] <- modij$aic-2*(p[i]+q[j]+1)+2*(p[i]+q[j]+1)*n/(n-p[i]-q[j]-2)
+  }  
+}
+
+#aicv <- as.vector(aic)
+
+#plot(aicv, ylab="AIC values")
+
+indexaic <- which(aic == min(aic), arr.ind = TRUE)
+
+porder <- indexaic[1,1] - 1
+qorder <- indexaic[1,2] - 1
+# Final residuals model
+residuals.model <- arima(residuals, order = c(porder, 0, qorder), method = "ML")
+return(residuals.model)
+}
+```
+
+
+
+```{r}
+fit_func(residual_tmin$England_E_and_NE) -> N_I
+```
+
+```{r}
+lapply(residual_tmin, fit_func) %>% set_names(names(residual_tmin)) -> Tmin_residual_models
+lapply(residual_tmean, fit_func) %>% set_names(names(residual_tmin)) -> Tmean_residual_models
+lapply(residual_tmax, fit_func) %>% set_names(names(residual_tmin)) -> Tmax_residual_models
+```
+
+
+
+
+
+
+#--5C••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+• Forecast the average max, min and mean temperature for each month of 2020.
+Remember that you also have to forecast the trend and seasonal components.
+
+
+```{r}
+predict_har2<- function(residuals.model,final_model,poly_order){
+  ahead <- 12
+
+pred.res <- predict(residuals.model, n.ahead = ahead)$pred
+  
+  
+  TIME.NEW <- seq(from = 2020, by = 1/12, length = ahead)
+  SIN.NEW <- COS.NEW <- matrix(nrow = length(TIME.NEW), ncol = 6)
+
+for(i in 1:6){
+  SIN.NEW[,i] <- sin(2 * pi * i * TIME.NEW)
+  COS.NEW[,i] <- cos(2 * pi * i * TIME.NEW)
+}
+pred <- predict(final_model, newdata = data.frame(TIME = poly(TIME.NEW, degree = poly_order, raw = TRUE),
+                                      #This is timeseries and param specific
+                                       SIN = SIN.NEW[,c(1,2)],
+                                       COS = COS.NEW[,c(1,2)]))
+
+
+#plot(time.all,Tmin_2019$Northern_Ireland,type = 'l',xlim = c(2000, 2021))
+#lines(TIME.NEW,pred + pred.res,col = 'red',lwd = 2)
+
+return(pred)
+}
+```
+
+
+```{r}
+predict_har3_A<- function(residuals.model,final_model,poly_order){
+  ahead <- 12
+
+pred.res <- predict(residuals.model, n.ahead = ahead)$pred
+  
+  
+  TIME.NEW <- seq(from = 2020, by = 1/12, length = ahead)
+  SIN.NEW <- COS.NEW <- matrix(nrow = length(TIME.NEW), ncol = 6)
+
+for(i in 1:6){
+  SIN.NEW[,i] <- sin(2 * pi * i * TIME.NEW)
+  COS.NEW[,i] <- cos(2 * pi * i * TIME.NEW)
+}
+pred <- predict(final_model, newdata = data.frame(TIME = poly(TIME.NEW, degree = poly_order, raw = TRUE),
+                                      #This is timeseries and param specific
+                                       SIN = SIN.NEW[,c(1,2)],
+                                       COS = COS.NEW[,c(1,2,3)]))
+
+#plot(time.all,Tmin_2019$Northern_Ireland,type = 'l',xlim = c(2000, 2021))
+#lines(TIME.NEW,pred + pred.res,col = 'red',lwd = 2)
+
+return(pred)
+}
+```
+
+```{r}
+predict_har3_B<- function(residuals.model,final_model,poly_order){
+  ahead <- 12
+
+pred.res <- predict(residuals.model, n.ahead = ahead)$pred
+  
+  
+  TIME.NEW <- seq(from = 2020, by = 1/12, length = ahead)
+  SIN.NEW <- COS.NEW <- matrix(nrow = length(TIME.NEW), ncol = 6)
+
+for(i in 1:6){
+  SIN.NEW[,i] <- sin(2 * pi * i * TIME.NEW)
+  COS.NEW[,i] <- cos(2 * pi * i * TIME.NEW)
+}
+pred <- predict(final_model, newdata = data.frame(TIME = poly(TIME.NEW, degree = poly_order, raw = TRUE),
+                                      #This is timeseries and param specific
+                                       SIN = SIN.NEW[,c(1,2)],
+                                       COS = COS.NEW[,c(1,2,4)]))
+
+#plot(time.all,Tmin_2019$Northern_Ireland,type = 'l',xlim = c(2000, 2021))
+#lines(TIME.NEW,pred + pred.res,col = 'red',lwd = 2)
+
+return(pred)
+}
+```
+
+
+```{r}
+predict_har3_C<- function(residuals.model,final_model,poly_order){
+  ahead <- 12
+
+pred.res <- predict(residuals.model, n.ahead = ahead)$pred
+  
+  
+  TIME.NEW <- seq(from = 2020, by = 1/12, length = ahead)
+  SIN.NEW <- COS.NEW <- matrix(nrow = length(TIME.NEW), ncol = 6)
+
+for(i in 1:6){
+  SIN.NEW[,i] <- sin(2 * pi * i * TIME.NEW)
+  COS.NEW[,i] <- cos(2 * pi * i * TIME.NEW)
+}
+pred <- predict(final_model, newdata = data.frame(TIME = poly(TIME.NEW, degree = poly_order, raw = TRUE),
+                                      #This is timeseries and param specific
+                                       SIN = SIN.NEW[,c(1,2,5)],
+                                       COS = COS.NEW[,c(1,2)]))
+
+
+return(pred)
+
+#plot(time.all,Tmin_2019$Northern_Ireland,type = 'l',xlim = c(2000, 2021))
+#lines(TIME.NEW,pred + pred.res,col = 'red',lwd = 2)
+}
+```
+
+
+```{r}
+predict_har4<- function(residuals.model,final_model,poly_order){
+  ahead <- 12
+
+pred.res <- predict(residuals.model, n.ahead = ahead)$pred
+  
+  
+  TIME.NEW <- seq(from = 2020, by = 1/12, length = ahead)
+  SIN.NEW <- COS.NEW <- matrix(nrow = length(TIME.NEW), ncol = 6)
+
+for(i in 1:6){
+  SIN.NEW[,i] <- sin(2 * pi * i * TIME.NEW)
+  COS.NEW[,i] <- cos(2 * pi * i * TIME.NEW)
+}
+pred <- predict(final_model, newdata = data.frame(TIME = poly(TIME.NEW, degree = poly_order, raw = TRUE),
+                                      #This is timeseries and param specific
+                                       SIN = SIN.NEW[,c(1,2,4)],
+                                       COS = COS.NEW[,c(1,2,3)]))
+
+
+return(pred)
+
+#plot(time.all,Tmin_2019$Northern_Ireland,type = 'l',xlim = c(2000, 2021))
+#lines(TIME.NEW,pred + pred.res,col = 'red',lwd = 2)
+}
+```
+
+
+
+we need this two for the function to work fit_func(residual_tmin$Northern_Ireland) -> N_I
+and its final model Tmin_final_model$Northern_Ireland
+
+
+
+-TMIN MODELS
+```{r}
+predict_har2(Tmin_residual_models$Northern_Ireland,Tmin_final_model$Northern_Ireland,1) 
+```
+
+
+```{r}
+Tmin_har2_residuals <- Tmin_residual_models[names(best_model_TMIN[-c(3,9)])]
+Tmin_har2_model <- Tmin_final_model[names(best_model_TMIN[-c(3,9)])]
+mapply(predict_har2, Tmin_har2_residuals, Tmin_har2_model,1, SIMPLIFY = FALSE) -> final_predict_Tmin_har2
+#####################################################################
+Tmin_har3_B_residuals <- Tmin_residual_models[names(best_model_TMIN[c(3)])]
+Tmin_har3_B_model <- Tmin_final_model[names(best_model_TMIN[c(3)])]
+mapply(predict_har3_B, Tmin_har3_B_residuals, Tmin_har3_B_model,1, SIMPLIFY = FALSE) -> final_predict_Tmin_har3_B
+#####################################################################
+Tmin_har3_C_residuals <- Tmin_residual_models[names(best_model_TMIN[c(9)])]
+Tmin_har3_C_model <- Tmin_final_model[names(best_model_TMIN[c(9)])]
+mapply(predict_har3_C, Tmin_har3_C_residuals, Tmin_har3_C_model,1, SIMPLIFY = FALSE) -> final_predict_Tmin_har3_C
+#######################COMBINE ALL TMIN##############################################
+
+do.call(c, list(final_predict_Tmin_har2, final_predict_Tmin_har3_B,final_predict_Tmin_har3_C)) -> Tmin_final_predictions
+# prediction validation check
+length(names(Tmin_final_predictions))
+```
+
+
+
+
+```{r}
+final_predict_Tmin_har2$Northern_Ireland
+```
+
+
+-TMEAN MODELS
+```{r}
+Tmean_har2_residuals <- Tmean_residual_models[names(best_model_TMean[-c(4)])]
+Tmean_har2_model <- Tmean_final_model[names(best_model_TMean[-c(4)])]
+mapply(predict_har2, Tmean_har2_residuals, Tmean_har2_model,1, SIMPLIFY = FALSE) -> final_predict_Tmean_har2
+#####################################################################
+Tmean_har3_A_residuals <- Tmean_residual_models[names(best_model_TMIN[c(4)])]
+Tmean_har3_A_model <- Tmean_final_model[names(best_model_TMIN[c(4)])]
+mapply(predict_har3_A, Tmean_har3_A_residuals, Tmean_har3_A_model,1, SIMPLIFY = FALSE) -> final_predict_Tmean_har3_A
+#######################COMBINE ALL TMEAN##############################################
+
+do.call(c, list(final_predict_Tmean_har2,final_predict_Tmean_har3_A)) -> Tmean_final_predictions
+# prediction validation check
+length(names(Tmean_final_predictions))
+```
+
+
+
+
+-TMAX MODELS
+```{r}
+Tmax_har3_A_residuals_ln <-Tmax_residual_models[names(best_model_TMax_ln[1:5])]
+Tmax_har3_A_model_ln <-Tmax_final_model[names(best_model_TMax_ln[1:5])]
+mapply(predict_har3_A, Tmax_har3_A_residuals_ln, Tmax_har3_A_model_ln,1, SIMPLIFY = FALSE) -> final_predict_Tmax_ln_har3_A
+#####################################################################
+Tmax_har2_residuals_ln <-Tmax_residual_models[names(best_model_TMax_ln[c(6,8)])]
+Tmax_har2_model_ln <-Tmax_final_model[names(best_model_TMax_ln[c(6,8)])]
+mapply(predict_har2, Tmax_har2_residuals_ln, Tmax_har2_model_ln,1, SIMPLIFY = FALSE) -> final_predict_Tmax_ln_har2
+#####################################################################
+
+Tmax_har4_residuals_ln <-Tmax_residual_models[names(best_model_TMax_ln[c(7)])]
+Tmax_har4_model_ln <-Tmax_final_model[names(best_model_TMax_ln[c(7)])]
+mapply(predict_har4, Tmax_har4_residuals_ln, Tmax_har4_model_ln,1, SIMPLIFY = FALSE) -> final_predict_Tmax_ln_har4
+#####################################################################
+
+Tmax_har2_residuals_cb <-Tmax_residual_models[names(best_model_TMax_cubic)]
+Tmax_har2_model_cb <-Tmax_final_model[names(best_model_TMax_cubic)]
+
+mapply(predict_har2, Tmax_har2_residuals_cb, Tmax_har2_model_cb,3, SIMPLIFY = FALSE) -> final_predict_Tmax_cb_har2
+
+#######################COMBINE ALL TMAX##############################################
+
+do.call(c, list(final_predict_Tmax_ln_har3_A, final_predict_Tmax_ln_har2,final_predict_Tmax_ln_har4,final_predict_Tmax_cb_har2)) -> Tmax_final_predictions
+# prediction validation check
+length(names(Tmax_final_predictions))
+```
+
+
+```{r}
+#final predictions
+list(Tmin_final_predictions=Tmin_final_predictions, Tmean_final_predictions=Tmean_final_predictions,Tmax_final_predictions=Tmax_final_predictions) -> predictions
+```
+
+
+#--5D••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+• Compare your forecasts with the actual values. You may find it useful to look at the
+following link https://otexts.com/fpp2/accuracy.html. Which model performs better?
+
+
+
+```{r}
+library(forecast)
+beer3 <- window(Tmin$Northern_Ireland, start=2020)
+accuracy(predictions$Tmin_final_predictions$Northern_Ireland, beer3)
+
+```
+
+
+
+```{r}
+window(Tmin$Northern_Ireland, start=2020)
+```
+
+
+
+```{r}
+predictions$Tmin_final_predictions$Northern_Ireland
+```
+
+```{r}
+Tmin_residual_models$Northern_Ireland
+```
+
+
+
+
+```{r}
+residual_tmin$Northern_Ireland
+```
+
+
+
+# Report (10%)
+```{r}
+
+```
+
+Leave this section blank for marking
